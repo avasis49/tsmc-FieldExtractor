@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Field Extractor — Kibana JSON</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg: #0b0f10;
+    --panel: #12181a;
+    --panel-2: #161d1f;
+    --line: #223033;
+    --line-soft: #1b2426;
+    --text: #d9e5e3;
+    --text-dim: #7f9694;
+    --accent: #35d0b0;
+    --accent-dim: #1c8f78;
+    --amber: #e8a94a;
+    --danger: #e85d5d;
+    --mono: "IBM Plex Mono", "Sarabun", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "Sarabun", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:
+      radial-gradient(1200px 600px at 100% -10%, rgba(53,208,176,0.06), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 28px;
+  }
+
+  .scanline{
+    position: fixed; inset:0; pointer-events:none; z-index: 50;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode: overlay;
+  }
+
+  .wrap{ max-width: 1400px; margin: 0 auto; }
+
+  /* ---------- Header ---------- */
+  .topbar{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    gap: 24px; margin-bottom: 22px; padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .brand{ display:flex; align-items:center; gap:14px; }
+  .brand-mark{
+    width: 40px; height: 40px; border-radius: 8px;
+    background: linear-gradient(155deg, var(--accent), var(--accent-dim));
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--mono); font-weight:700; color:#04211b; font-size: 14px;
+    box-shadow: 0 0 0 1px rgba(53,208,176,0.25), 0 8px 24px -8px rgba(53,208,176,0.5);
+    flex-shrink:0;
+  }
+  .brand h1{
+    font-size: 19px; font-weight:700; margin:0; letter-spacing: 0.2px; color:#eef7f5;
+  }
+  .brand .tag{
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+    letter-spacing: 1.5px; text-transform: uppercase; margin-top:3px;
+  }
+  .status-cluster{ display:flex; gap: 18px; align-items:center; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  .status-dot{ width:7px; height:7px; border-radius:50%; background: var(--line); display:inline-block; margin-right:6px; }
+  .status-dot.on{ background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ---------- Panels ---------- */
+  .panel{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .panel-head{
+    display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;
+  }
+  .panel-title{
+    font-family: var(--mono); font-size: 11px; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--accent); display:flex; align-items:center; gap:8px;
+  }
+  .panel-title .num{ color: var(--text-dim); }
+
+  /* ---------- Input row ---------- */
+  .input-row{ display:flex; gap: 14px; flex-wrap: wrap; align-items: stretch; }
+  .drop{
+    flex: 1 1 320px;
+    border: 1.5px dashed var(--line);
+    border-radius: 8px;
+    padding: 22px;
+    text-align:center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    position: relative;
+    min-height: 92px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  }
+  .drop:hover, .drop.drag{ border-color: var(--accent); background: rgba(53,208,176,0.04); }
+  .drop input{ display:none; }
+  .drop .icon{ font-size: 20px; color: var(--accent); margin-bottom:2px; }
+  .drop .main{ font-size: 13.5px; color: var(--text); }
+  .drop .sub{ font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+
+  .paste-col{ flex: 1 1 320px; display:flex; flex-direction:column; gap:8px; }
+  textarea#pasteArea{
+    width:100%; min-height: 92px; resize: vertical;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    font-family: var(--mono); font-size: 12px; padding: 10px 12px;
+  }
+  textarea#pasteArea:focus{ outline:none; border-color: var(--accent-dim); }
+  .paste-actions{ display:flex; gap:8px; }
+
+  .btn{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.4px;
+    border-radius: 6px; padding: 9px 14px; cursor:pointer;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    transition: all .12s; white-space: nowrap;
+    display:inline-flex; align-items:center; gap:7px;
+  }
+  .btn:hover{ border-color: var(--accent-dim); color:#eef7f5; }
+  .btn:active{ transform: translateY(1px); }
+  .btn.primary{ background: var(--accent); border-color: var(--accent); color:#04211b; font-weight:700; }
+  .btn.primary:hover{ background:#48e0c0; }
+  .btn.ghost{ background: transparent; }
+  .btn.danger{ color: var(--danger); border-color: rgba(232,93,93,0.3); background:transparent;}
+  .btn.danger:hover{ border-color: var(--danger); }
+  .btn:disabled{ opacity:0.35; cursor:not-allowed; }
+  .btn:disabled:hover{ border-color: var(--line); color: var(--text); }
+
+  .file-list{ margin-top:10px; font-family: var(--mono); font-size:11.5px; color: var(--text-dim); display:flex; flex-wrap:wrap; gap:8px; }
+  .file-chip{ background: var(--panel-2); border:1px solid var(--line); border-radius:5px; padding: 4px 9px; display:flex; align-items:center; gap:6px; }
+  .file-chip b{ color: var(--text); font-weight:600; }
+  .file-chip .x{ cursor:pointer; color: var(--danger); font-weight:700; padding-left:2px; }
+
+  /* ---------- Field selector ---------- */
+  .field-group-label{
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); letter-spacing: 1px;
+    text-transform: uppercase; margin: 14px 0 8px; display:flex; align-items:center; gap:8px;
+  }
+  .field-group-label::after{ content:""; flex:1; height:1px; background: var(--line-soft); }
+  .field-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 12px; }
+  .field-item{
+    display:flex; align-items:center; gap:9px;
+    padding: 7px 10px; border-radius: 6px;
+    background: var(--panel-2); border:1px solid var(--line-soft);
+    font-size: 13px; cursor:pointer; user-select:none;
+    transition: border-color .12s;
+  }
+  .field-item:hover{ border-color: var(--line); }
+  .field-item.locked{ cursor: default; opacity: 0.85; }
+  .field-item input{ accent-color: var(--accent); width:14px; height:14px; flex-shrink:0; }
+  .field-item .lbl{ flex:1; }
+  .field-item .lbl code{ display:block; font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top:1px; }
+  .field-item.locked .lbl{ color: var(--accent); }
+  .pin{ font-size:10px; color:var(--amber); font-family: var(--mono); }
+
+  /* ---------- Table panel ---------- */
+  .table-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
+  .count-pill{
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    background: var(--panel-2); border:1px solid var(--line); border-radius: 6px; padding: 7px 12px;
+  }
+  .count-pill b{ color: var(--accent); }
+  .search-box{
+    background: var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding: 8px 12px; font-family: var(--mono); font-size:12px; color: var(--text);
+    min-width: 220px; flex:1;
+  }
+  .search-box:focus{ outline:none; border-color: var(--accent-dim); }
+  .toolbar-right{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  .table-scroll{
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    max-height: 62vh;
+  }
+  table{ border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12px; }
+  thead th{
+    position: sticky; top:0; z-index: 2;
+    background: #0f1517;
+    text-align:left; padding: 10px 12px;
+    border-bottom: 1px solid var(--accent-dim);
+    color: var(--accent); font-weight:600; letter-spacing:0.3px;
+    white-space: nowrap;
+  }
+  thead th.rownum-h{ position: sticky; left:0; z-index:3; background:#0f1517; }
+  tbody td{
+    padding: 8px 12px; border-bottom: 1px solid var(--line-soft);
+    color: var(--text); vertical-align: top; max-width: 320px;
+    white-space: nowrap; overflow:hidden; text-overflow: ellipsis;
+    cursor: default;
+  }
+  tbody td.wrap-cell{ white-space: normal; word-break: break-all; }
+  tbody td.rownum{
+    position: sticky; left:0; background: var(--panel); color: var(--text-dim);
+    text-align:right; padding-right:14px; z-index:1;
+  }
+  tbody tr:hover td{ background: rgba(53,208,176,0.045); }
+  tbody tr:hover td.rownum{ background: rgba(53,208,176,0.08); }
+  tbody td.empty{ color: #3a4a48; }
+  tbody td.copyable:hover{ color: var(--accent); }
+  tbody tr.hidden{ display:none; }
+
+  .empty-state{
+    text-align:center; padding: 48px 20px; color: var(--text-dim); font-size: 13px;
+  }
+  .empty-state .big{ font-size: 30px; margin-bottom: 10px; opacity:0.7; }
+  .empty-state code{ font-family: var(--mono); background: var(--panel-2); padding:2px 6px; border-radius:4px; }
+
+  .toast{
+    position: fixed; bottom: 24px; left:50%; transform: translateX(-50%) translateY(20px);
+    background: #0f1517; border:1px solid var(--accent-dim); color: var(--accent);
+    font-family: var(--mono); font-size: 12.5px; padding: 11px 18px; border-radius: 8px;
+    opacity:0; pointer-events:none; transition: all .25s;
+    box-shadow: 0 12px 30px -8px rgba(0,0,0,0.6);
+    z-index: 100;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  footer{ margin-top: 22px; text-align:center; font-family: var(--mono); font-size:10.5px; color: #3a4a48; }
+
+  @media (max-width: 640px){
+    body{ padding: 14px; }
+    .table-scroll{ max-height: 50vh; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">LG</div>
+      <div>
+        <h1>Log Field Extractor</h1>
+        <div class="tag">Kibana / Elasticsearch JSON &middot; Sky-MPO Convert Logs</div>
+      </div>
+    </div>
+    <div class="status-cluster">
+      <span><span class="status-dot" id="dotFile"></span>Source</span>
+      <span><span class="status-dot" id="dotParsed"></span>Parsed</span>
+      <span><span class="status-dot on"></span>Local only — no upload</span>
+    </div>
+  </div>
+
+  <!-- INPUT -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">01</span> นำเข้าข้อมูล</div>
+    </div>
+    <div class="input-row">
+      <label class="drop" id="dropZone">
+        <input type="file" id="fileInput" accept=".json,application/json" multiple>
+        <div class="icon">&#8657;</div>
+        <div class="main">ลากไฟล์ .json มาวาง หรือคลิกเพื่อเลือกไฟล์</div>
+        <div class="sub">รองรับหลายไฟล์ &middot; Kibana Discover export</div>
+      </label>
+      <div class="paste-col">
+        <textarea id="pasteArea" placeholder="หรือวาง JSON ที่ก็อปมาจาก Kibana ตรงนี้ แล้วกด Parse..."></textarea>
+        <div class="paste-actions">
+          <button class="btn primary" id="parsePasteBtn">Parse ข้อความที่วาง</button>
+          <button class="btn ghost" id="clearAllBtn">ล้างข้อมูลทั้งหมด</button>
+        </div>
+      </div>
+    </div>
+    <div class="file-list" id="fileList"></div>
+  </div>
+
+  <!-- FIELD SELECTOR -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">02</span> เลือกฟิลด์ที่ต้องการแสดง</div>
+      <button class="btn ghost" id="resetFieldsBtn">รีเซ็ตเป็นค่าเริ่มต้น</button>
+    </div>
+
+    <div class="field-group-label">ค่าเริ่มต้น (ล็อกไว้)</div>
+    <div class="field-grid" id="defaultFieldGrid"></div>
+
+    <div class="field-group-label">ฟิลด์เพิ่มเติม — เลือกได้ตามต้องการ</div>
+    <div class="field-grid" id="optionalFieldGrid"></div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">03</span> ผลลัพธ์</div>
+    </div>
+    <div class="table-toolbar">
+      <input type="text" class="search-box" id="searchBox" placeholder="ค้นหาในผลลัพธ์... (เช่น เบอร์โทร, request id)">
+      <div class="count-pill"><b id="rowCount">0</b> แถว &nbsp;/&nbsp; <b id="fileCount">0</b> ไฟล์ &nbsp;/&nbsp; <b id="colCount">0</b> คอลัมน์</div>
+      <div class="toolbar-right">
+        <button class="btn" id="copyAllBtn" disabled>&#128203; Copy All</button>
+        <button class="btn" id="exportCsvBtn" disabled>&#8681; CSV</button>
+        <button class="btn primary" id="exportXlsxBtn" disabled>&#8681; Export Excel</button>
+      </div>
+    </div>
+    <div class="table-scroll" id="tableScroll">
+      <div class="empty-state" id="emptyState">
+        <div class="big">&#9679; &#9679; &#9679;</div>
+        ยังไม่มีข้อมูล — อัปโหลดหรือวางไฟล์ JSON จาก Kibana ด้านบน<br>
+        <span style="font-size:11px">รองรับรูปแบบ Discover export ที่มี <code>fields.REQUEST_HEADER</code>, <code>fields.REQUEST_BODY</code>, <code>fields.RESPONSE_BODY</code></span>
+      </div>
+      <table id="dataTable" style="display:none">
+        <thead><tr id="headRow"></tr></thead>
+        <tbody id="bodyRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Client-side only. Data never leaves this browser tab.</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------
+     1. FIELD DEFINITIONS
+     Each field: id, label(TH), path(EN hint), locked(default on+not togglable),
+     extractor(ctx) -> value
+     ctx = { header, body, response, top(raw fields obj, first-value flattened), record }
+  --------------------------------------------------------- */
+  function firstVal(rec, key){
+    if(!rec || !rec.fields) return undefined;
+    var v = rec.fields[key];
+    if(Array.isArray(v)) return v.length ? v[0] : undefined;
+    return v;
+  }
+  function safeParse(s){
+    if(s === undefined || s === null) return null;
+    if(typeof s !== 'string') return s;
+    try{ return JSON.parse(s); }catch(e){ return null; }
+  }
+  function get(obj, path){
+    if(obj == null) return undefined;
+    var parts = path.split('.');
+    var cur = obj;
+    for(var i=0;i<parts.length;i++){
+      if(cur == null) return undefined;
+      var p = parts[i];
+      var m = p.match(/^([^\[]+)\[(\d+)\]$/);
+      if(m){
+        cur = cur[m[1]];
+        if(Array.isArray(cur)) cur = cur[parseInt(m[2],10)];
+        else return undefined;
+      } else {
+        cur = cur[p];
+      }
+    }
+    return cur;
+  }
+
+  var FIELDS = [
+    // ---- DEFAULT (locked on) ----
+    { id:'x_api_request_id', label:'x-api-request-id', hint:'REQUEST_HEADER', group:'default',
+      fn:function(c){ return get(c.header,'x-api-request-id'); } },
+    { id:'orderRefId', label:'orderRefId', hint:'RESPONSE_BODY', group:'default',
+      fn:function(c){ return get(c.response,'orderRefId'); } },
+    { id:'idCardImage', label:'idCardImage', hint:'customerIdentity', group:'default',
+      fn:function(c){ return get(c.body,'customerIdentity.idCardImage') || firstVal(c.record,'idCardImagePath'); } },
+    { id:'imagesFace', label:'imagesFace', hint:'customerIdentity', group:'default',
+      fn:function(c){ return get(c.body,'customerIdentity.imagesFace'); } },
+    { id:'imagesId', label:'imagesId', hint:'customerIdentity', group:'default',
+      fn:function(c){ return get(c.body,'customerIdentity.imagesId'); } },
+    { id:'businessDocument', label:'businessDocument', hint:'customerIdentity', group:'default',
+      fn:function(c){ return get(c.body,'customerIdentity.businessDocument'); } },
+
+    // ---- OPTIONAL ----
+    { id:'orderNo', label:'orderNo', hint:'RESPONSE_BODY', group:'response',
+      fn:function(c){ return get(c.response,'orderNo'); } },
+    { id:'requestId', label:'REQUEST_ID', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'REQUEST_ID'); } },
+    { id:'timestamp', label:'TIMESTAMP', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'TIMESTAMP'); } },
+    { id:'requestUri', label:'REQUEST_URI', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'REQUEST_URI'); } },
+    { id:'responseStatus', label:'RESPONSE_STATUS', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'RESPONSE_STATUS'); } },
+    { id:'responseTime', label:'RESPONSE_TIME (ms)', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'RESPONSE_TIME'); } },
+    { id:'errorMessage', label:'ERROR_MESSAGE', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'ERROR_MESSAGE'); } },
+    { id:'serviceEndpoint', label:'SERVICE_ENDPOINT', hint:'top-level', group:'meta',
+      fn:function(c){ return firstVal(c.record,'SERVICE_ENDPOINT'); } },
+
+    { id:'mobileNo', label:'เบอร์โทร (publicIdValue)', hint:'REQUEST_BODY', group:'body',
+      fn:function(c){ return get(c.body,'publicIdValue'); } },
+    { id:'channel', label:'channel', hint:'REQUEST_BODY', group:'body',
+      fn:function(c){ return get(c.body,'channel'); } },
+    { id:'customerOrderType', label:'customerOrderType', hint:'REQUEST_BODY', group:'body',
+      fn:function(c){ return get(c.body,'customerOrderType'); } },
+    { id:'reasonCode', label:'reasonCode', hint:'REQUEST_BODY', group:'body',
+      fn:function(c){ return get(c.body,'reasonCode'); } },
+    { id:'orderCreatorName', label:'ผู้สร้างออเดอร์', hint:'relateParty.orderCreator', group:'body',
+      fn:function(c){ return get(c.body,'relateParty.orderCreator.name'); } },
+    { id:'dealerCode', label:'รหัสดีลเลอร์', hint:'relateParty.dealer', group:'body',
+      fn:function(c){ return get(c.body,'relateParty.dealer.code'); } },
+    { id:'employeeId', label:'employeeId', hint:'relateParty', group:'body',
+      fn:function(c){ return get(c.body,'relateParty.employeeId'); } },
+
+    { id:'imagesPost', label:'imagesPost', hint:'customerIdentity', group:'identity',
+      fn:function(c){ return get(c.body,'customerIdentity.imagesPost'); } },
+    { id:'orderVerify', label:'orderVerify', hint:'customerIdentity', group:'identity',
+      fn:function(c){ return get(c.body,'customerIdentity.orderVerify'); } },
+    { id:'dopaStatus', label:'dopaStatus', hint:'customerIdentity', group:'identity',
+      fn:function(c){ return get(c.body,'customerIdentity.dopaStatus'); } },
+    { id:'issueDate', label:'issueDate (บัตร)', hint:'customerIdentity', group:'identity',
+      fn:function(c){ return get(c.body,'customerIdentity.issueDate'); } },
+    { id:'idCardNumber', label:'idCardNumber (เข้ารหัส)', hint:'customerIdentity', group:'identity',
+      fn:function(c){ return get(c.body,'customerIdentity.idCardNumber'); } },
+    { id:'fullName', label:'ชื่อ-นามสกุล', hint:'customerIdentity', group:'identity',
+      fn:function(c){
+        var t = get(c.body,'customerIdentity.titleName')||'';
+        var f = get(c.body,'customerIdentity.firstName')||'';
+        var l = get(c.body,'customerIdentity.lastName')||'';
+        var s = (t+' '+f+' '+l).trim();
+        return s || undefined;
+      } },
+
+    { id:'caNumber', label:'caNumber', hint:'baInfo[0]', group:'account',
+      fn:function(c){ return get(c.body,'baInfo[0].caNumber') || get(c.body,'accountInfo.baInfo[0].caNumber'); } },
+    { id:'caName', label:'caName', hint:'baInfo[0]', group:'account',
+      fn:function(c){ return get(c.body,'baInfo[0].caName') || get(c.body,'accountInfo.baInfo[0].caName'); } },
+    { id:'province', label:'จังหวัด', hint:'baInfo[0].address', group:'account',
+      fn:function(c){ return get(c.body,'baInfo[0].address.province') || get(c.body,'accountInfo.baInfo[0].address.province'); } },
+    { id:'zipCode', label:'รหัสไปรษณีย์', hint:'baInfo[0].address', group:'account',
+      fn:function(c){ return get(c.body,'baInfo[0].address.zipCode') || get(c.body,'accountInfo.baInfo[0].address.zipCode'); } },
+    { id:'productName', label:'แพ็กเกจ/โปรดักต์', hint:'productOrderItem', group:'account',
+      fn:function(c){
+        return get(c.body,'baInfo[0].mobileInfo[0].productOrderItem[0].idValue') ||
+               get(c.body,'accountInfo.baInfo[0].mobileInfo[0].productOrderItem[0].idValue');
+      } },
+    { id:'chargeType', label:'chargeType', hint:'mobileInfo[0]', group:'account',
+      fn:function(c){
+        return get(c.body,'baInfo[0].mobileInfo[0].chargeType') ||
+               get(c.body,'accountInfo.baInfo[0].mobileInfo[0].chargeType');
+      } }
+  ];
+
+  var GROUP_LABEL = {
+    response:'Response', meta:'Meta / Top-level', body:'Order / Request Body',
+    identity:'Customer Identity', account:'Account & Product'
+  };
+
+  var DEFAULT_IDS = FIELDS.filter(function(f){return f.group==='default';}).map(function(f){return f.id;});
+  var selected = {}; // id -> bool
+  DEFAULT_IDS.forEach(function(id){ selected[id] = true; });
+
+  /* ---------------------------------------------------------
+     2. PARSING RECORDS FROM RAW JSON (handles a few shapes)
+  --------------------------------------------------------- */
+  function extractHitsArray(json){
+    if(Array.isArray(json)) return json;
+    if(json && json.hits && Array.isArray(json.hits.hits)) return json.hits.hits;
+    if(json && Array.isArray(json.rawResponse && json.rawResponse.hits && json.rawResponse.hits.hits)) {
+      return json.rawResponse.hits.hits;
+    }
+    if(json && Array.isArray(json.data)) return json.data;
+    return null;
+  }
+
+  function buildContext(rec){
+    var f = (rec && rec.fields) ? rec.fields : rec; // tolerate flat records too
+    var pseudo = { fields: f };
+    var header = safeParse(firstVal(pseudo,'REQUEST_HEADER'));
+    var response = safeParse(firstVal(pseudo,'RESPONSE_BODY'));
+    var bodyRaw = firstVal(pseudo,'REQUEST_BODY');
+    var step1 = safeParse(bodyRaw);
+    var body = (typeof step1 === 'string') ? safeParse(step1) : step1;
+    return { header: header, response: response, body: body, record: pseudo };
+  }
+
+  var rows = []; // { __file, __idx, values: {id: val} }
+  var loadedFiles = []; // {name, count}
+
+  function ingest(json, fileName){
+    var hits = extractHitsArray(json);
+    if(!hits){
+      throw new Error('ไม่พบโครงสร้างข้อมูลที่รองรับ (ต้องมี array ของ hits หรือ hits.hits)');
+    }
+    var added = 0;
+    hits.forEach(function(rec, i){
+      var ctx = buildContext(rec);
+      var values = {};
+      FIELDS.forEach(function(fdef){
+        var v;
+        try{ v = fdef.fn(ctx); }catch(e){ v = undefined; }
+        values[fdef.id] = (v===undefined||v===null||v==='') ? '' : String(v);
+      });
+      rows.push({ __file: fileName, __idx: i, values: values });
+      added++;
+    });
+    loadedFiles.push({ name: fileName, count: added });
+    return added;
+  }
+
+  /* ---------------------------------------------------------
+     3. UI — field selector rendering
+  --------------------------------------------------------- */
+  var defaultGrid = document.getElementById('defaultFieldGrid');
+  var optionalGrid = document.getElementById('optionalFieldGrid');
+
+  function renderFieldSelectors(){
+    defaultGrid.innerHTML = '';
+    FIELDS.filter(function(f){return f.group==='default';}).forEach(function(fdef){
+      var el = document.createElement('div');
+      el.className = 'field-item locked';
+      el.innerHTML = '<input type="checkbox" checked disabled>' +
+        '<div class="lbl">'+fdef.label+'<code>'+fdef.hint+'</code></div>' +
+        '<span class="pin">PIN</span>';
+      defaultGrid.appendChild(el);
+    });
+
+    optionalGrid.innerHTML = '';
+    var groups = {};
+    FIELDS.filter(function(f){return f.group!=='default';}).forEach(function(f){
+      groups[f.group] = groups[f.group] || [];
+      groups[f.group].push(f);
+    });
+    Object.keys(groups).forEach(function(gkey){
+      var label = document.createElement('div');
+      label.className = 'field-group-label';
+      label.textContent = GROUP_LABEL[gkey] || gkey;
+      optionalGrid.appendChild(label);
+      var sub = document.createElement('div');
+      sub.className = 'field-grid';
+      groups[gkey].forEach(function(fdef){
+        var item = document.createElement('label');
+        item.className = 'field-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!selected[fdef.id];
+        cb.addEventListener('change', function(){
+          selected[fdef.id] = cb.checked;
+          renderTable();
+        });
+        var lbl = document.createElement('div');
+        lbl.className = 'lbl';
+        lbl.innerHTML = fdef.label + '<code>'+fdef.hint+'</code>';
+        item.appendChild(cb); item.appendChild(lbl);
+        sub.appendChild(item);
+      });
+      optionalGrid.appendChild(sub);
+    });
+    // fix: appendChild sub grids need to be siblings of label but grouped visually — rebuild flat
+    // (simplify: put each group label + its own grid container)
+  }
+
+  // Rebuild optional grid properly grouped (label + grid pairs)
+  function renderFieldSelectorsV2(){
+    optionalGrid.innerHTML = '';
+    var groups = {};
+    var order = [];
+    FIELDS.filter(function(f){return f.group!=='default';}).forEach(function(f){
+      if(!groups[f.group]){ groups[f.group]=[]; order.push(f.group); }
+      groups[f.group].push(f);
+    });
+    order.forEach(function(gkey){
+      var label = document.createElement('div');
+      label.className = 'field-group-label';
+      label.style.marginTop = '10px';
+      label.textContent = GROUP_LABEL[gkey] || gkey;
+      optionalGrid.appendChild(label);
+
+      var grid = document.createElement('div');
+      grid.className = 'field-grid';
+      groups[gkey].forEach(function(fdef){
+        var item = document.createElement('label');
+        item.className = 'field-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!selected[fdef.id];
+        cb.addEventListener('change', function(){
+          selected[fdef.id] = cb.checked;
+          renderTable();
+        });
+        var lbl = document.createElement('div');
+        lbl.className = 'lbl';
+        lbl.innerHTML = fdef.label + '<code>'+fdef.hint+'</code>';
+        item.appendChild(cb); item.appendChild(lbl);
+        grid.appendChild(item);
+      });
+      optionalGrid.appendChild(grid);
+    });
+  }
+
+  function initDefaultGrid(){
+    defaultGrid.innerHTML = '';
+    FIELDS.filter(function(f){return f.group==='default';}).forEach(function(fdef){
+      var el = document.createElement('div');
+      el.className = 'field-item locked';
+      el.innerHTML = '<input type="checkbox" checked disabled>' +
+        '<div class="lbl">'+fdef.label+'<code>'+fdef.hint+'</code></div>' +
+        '<span class="pin">PIN</span>';
+      defaultGrid.appendChild(el);
+    });
+  }
+
+  document.getElementById('resetFieldsBtn').addEventListener('click', function(){
+    Object.keys(selected).forEach(function(id){ selected[id] = DEFAULT_IDS.indexOf(id) !== -1; });
+    renderFieldSelectorsV2();
+    renderTable();
+    toast('รีเซ็ตฟิลด์เรียบร้อย');
+  });
+
+  /* ---------------------------------------------------------
+     4. TABLE RENDERING
+  --------------------------------------------------------- */
+  var tableEl = document.getElementById('dataTable');
+  var headRow = document.getElementById('headRow');
+  var bodyRows = document.getElementById('bodyRows');
+  var emptyState = document.getElementById('emptyState');
+
+  function activeFieldDefs(){
+    return FIELDS.filter(function(f){ return f.group==='default' || selected[f.id]; });
+  }
+
+  function renderTable(){
+    var defs = activeFieldDefs();
+    var q = document.getElementById('searchBox').value.trim().toLowerCase();
+
+    document.getElementById('colCount').textContent = defs.length;
+    document.getElementById('rowCount').textContent = rows.length;
+    document.getElementById('fileCount').textContent = loadedFiles.length;
+
+    var hasData = rows.length > 0;
+    tableEl.style.display = hasData ? 'table' : 'none';
+    emptyState.style.display = hasData ? 'none' : 'block';
+
+    document.getElementById('copyAllBtn').disabled = !hasData;
+    document.getElementById('exportCsvBtn').disabled = !hasData;
+    document.getElementById('exportXlsxBtn').disabled = !hasData;
+
+    if(!hasData) return;
+
+    // head
+    headRow.innerHTML = '';
+    var thN = document.createElement('th');
+    thN.className = 'rownum-h';
+    thN.textContent = '#';
+    headRow.appendChild(thN);
+    var thFile = document.createElement('th');
+    thFile.textContent = 'ไฟล์';
+    headRow.appendChild(thFile);
+    defs.forEach(function(fdef){
+      var th = document.createElement('th');
+      th.textContent = fdef.label;
+      headRow.appendChild(th);
+    });
+
+    // body
+    bodyRows.innerHTML = '';
+    var visibleCount = 0;
+    rows.forEach(function(row, i){
+      var matches = true;
+      if(q){
+        matches = false;
+        for(var k in row.values){
+          if(row.values[k] && row.values[k].toLowerCase().indexOf(q) !== -1){ matches = true; break; }
+        }
+        if(!matches && row.__file.toLowerCase().indexOf(q) !== -1) matches = true;
+      }
+      var tr = document.createElement('tr');
+      if(!matches) tr.className = 'hidden'; else visibleCount++;
+
+      var tdN = document.createElement('td');
+      tdN.className = 'rownum';
+      tdN.textContent = (i+1);
+      tr.appendChild(tdN);
+
+      var tdF = document.createElement('td');
+      tdF.textContent = row.__file;
+      tdF.title = row.__file;
+      tr.appendChild(tdF);
+
+      defs.forEach(function(fdef){
+        var td = document.createElement('td');
+        var val = row.values[fdef.id];
+        if(val){
+          td.textContent = val;
+          td.title = val;
+          td.className = 'copyable';
+          td.addEventListener('click', function(){
+            copyText(val);
+            toast('คัดลอกแล้ว: ' + (val.length>40? val.slice(0,40)+'…': val));
+          });
+        } else {
+          td.textContent = '—';
+          td.className = 'empty';
+        }
+        tr.appendChild(td);
+      });
+      bodyRows.appendChild(tr);
+    });
+
+    document.getElementById('rowCount').textContent = q ? (visibleCount + ' / ' + rows.length) : rows.length;
+  }
+
+  document.getElementById('searchBox').addEventListener('input', renderTable);
+
+  /* ---------------------------------------------------------
+     5. COPY / EXPORT
+  --------------------------------------------------------- */
+  function copyText(t){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).catch(function(){ fallbackCopy(t); });
+    } else { fallbackCopy(t); }
+  }
+  function fallbackCopy(t){
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); }catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  function buildAOA(){
+    var defs = activeFieldDefs();
+    var header = ['#','ไฟล์'].concat(defs.map(function(f){return f.label;}));
+    var body = rows.map(function(row, i){
+      return [i+1, row.__file].concat(defs.map(function(f){ return row.values[f.id] || ''; }));
+    });
+    return [header].concat(body);
+  }
+
+  function toTSV(aoa){
+    return aoa.map(function(r){
+      return r.map(function(c){ return String(c).replace(/\t/g,' ').replace(/\r?\n/g,' '); }).join('\t');
+    }).join('\n');
+  }
+  function toCSV(aoa){
+    return aoa.map(function(r){
+      return r.map(function(c){
+        var s = String(c);
+        if(/[",\n]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+        return s;
+      }).join(',');
+    }).join('\r\n');
+  }
+
+  document.getElementById('copyAllBtn').addEventListener('click', function(){
+    var aoa = buildAOA();
+    copyText(toTSV(aoa));
+    toast('คัดลอกทั้งตารางแล้ว (' + rows.length + ' แถว) — วางลง Excel ได้เลย');
+  });
+
+  document.getElementById('exportCsvBtn').addEventListener('click', function(){
+    var aoa = buildAOA();
+    var csv = '\uFEFF' + toCSV(aoa); // BOM for Thai chars in Excel
+    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    downloadBlob(blob, 'log-extract-' + timestamp() + '.csv');
+    toast('ดาวน์โหลด CSV แล้ว');
+  });
+
+  document.getElementById('exportXlsxBtn').addEventListener('click', function(){
+    if(typeof XLSX === 'undefined'){ toast('โหลดไลบรารี Excel ไม่สำเร็จ ลองใช้ CSV แทน'); return; }
+    var aoa = buildAOA();
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    var colWidths = aoa[0].map(function(_, ci){
+      var maxLen = 8;
+      aoa.forEach(function(r){ var v = r[ci]==null?'':String(r[ci]); if(v.length>maxLen) maxLen=v.length; });
+      return { wch: Math.min(maxLen+2, 60) };
+    });
+    ws['!cols'] = colWidths;
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Log Extract');
+    XLSX.writeFile(wb, 'log-extract-' + timestamp() + '.xlsx');
+    toast('ดาวน์โหลด Excel แล้ว');
+  });
+
+  function downloadBlob(blob, name){
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  }
+  function timestamp(){
+    var d = new Date();
+    function p(n){ return String(n).padStart(2,'0'); }
+    return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes());
+  }
+
+  /* ---------------------------------------------------------
+     6. FILE HANDLING
+  --------------------------------------------------------- */
+  var fileListEl = document.getElementById('fileList');
+  var dropZone = document.getElementById('dropZone');
+  var fileInput = document.getElementById('fileInput');
+  var dotFile = document.getElementById('dotFile');
+  var dotParsed = document.getElementById('dotParsed');
+
+  function renderFileList(){
+    fileListEl.innerHTML = '';
+    loadedFiles.forEach(function(f, idx){
+      var chip = document.createElement('div');
+      chip.className = 'file-chip';
+      chip.innerHTML = '<span>'+escapeHtml(f.name)+'</span><b>'+f.count+' แถว</b><span class="x" data-idx="'+idx+'">✕</span>';
+      fileListEl.appendChild(chip);
+    });
+    Array.prototype.forEach.call(fileListEl.querySelectorAll('.x'), function(x){
+      x.addEventListener('click', function(){
+        var idx = parseInt(x.getAttribute('data-idx'),10);
+        var removed = loadedFiles[idx];
+        loadedFiles.splice(idx,1);
+        rows = rows.filter(function(r){ return r.__file !== removed.name; });
+        renderFileList();
+        renderTable();
+        updateDots();
+      });
+    });
+  }
+  function escapeHtml(s){ return s.replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function updateDots(){
+    dotFile.className = 'status-dot' + (loadedFiles.length ? ' on' : '');
+    dotParsed.className = 'status-dot' + (rows.length ? ' on' : '');
+  }
+
+  function handleFiles(fileArr){
+    var list = Array.prototype.slice.call(fileArr);
+    var pending = list.length;
+    if(!pending) return;
+    list.forEach(function(file){
+      var reader = new FileReader();
+      reader.onload = function(e){
+        try{
+          var json = JSON.parse(e.target.result);
+          var n = ingest(json, file.name);
+          toast('นำเข้า ' + file.name + ' สำเร็จ (' + n + ' แถว)');
+        }catch(err){
+          toast('ผิดพลาดกับไฟล์ ' + file.name + ': ' + err.message);
+        }
+        renderFileList();
+        renderTable();
+        updateDots();
+      };
+      reader.onerror = function(){ toast('อ่านไฟล์ ' + file.name + ' ไม่สำเร็จ'); };
+      reader.readAsText(file);
+    });
+  }
+
+  fileInput.addEventListener('change', function(e){
+    handleFiles(e.target.files);
+    fileInput.value = '';
+  });
+  ['dragenter','dragover'].forEach(function(ev){
+    dropZone.addEventListener(ev, function(e){ e.preventDefault(); dropZone.classList.add('drag'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    dropZone.addEventListener(ev, function(e){ e.preventDefault(); dropZone.classList.remove('drag'); });
+  });
+  dropZone.addEventListener('drop', function(e){
+    if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length){
+      handleFiles(e.dataTransfer.files);
+    }
+  });
+
+  document.getElementById('parsePasteBtn').addEventListener('click', function(){
+    var txt = document.getElementById('pasteArea').value.trim();
+    if(!txt){ toast('ยังไม่มีข้อความให้ Parse'); return; }
+    try{
+      var json = JSON.parse(txt);
+      var n = ingest(json, 'pasted-' + (loadedFiles.length+1));
+      toast('Parse สำเร็จ (' + n + ' แถว)');
+      document.getElementById('pasteArea').value = '';
+      renderFileList(); renderTable(); updateDots();
+    }catch(err){
+      toast('JSON ไม่ถูกต้อง: ' + err.message);
+    }
+  });
+
+  document.getElementById('clearAllBtn').addEventListener('click', function(){
+    rows = []; loadedFiles = [];
+    document.getElementById('pasteArea').value = '';
+    renderFileList(); renderTable(); updateDots();
+    toast('ล้างข้อมูลทั้งหมดแล้ว');
+  });
+
+  /* ---------------------------------------------------------
+     7. TOAST
+  --------------------------------------------------------- */
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function toast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2400);
+  }
+
+  /* ---------------------------------------------------------
+     INIT
+  --------------------------------------------------------- */
+  initDefaultGrid();
+  renderFieldSelectorsV2();
+  renderTable();
+  updateDots();
+})();
+</script>
+</body>
+</html>
